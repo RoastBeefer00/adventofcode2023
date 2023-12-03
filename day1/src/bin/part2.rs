@@ -1,14 +1,18 @@
 use anyhow::Result;
 use regex::Regex;
+use regex::Regex;
 use std::fs;
 
 #[derive(Clone)]
 struct Number {
     name: String,
     value: String,
+    name: String,
+    value: String,
 }
 
 impl Number {
+    fn new(name: String, value: String) -> Self {
     fn new(name: String, value: String) -> Self {
         Number { name, value }
     }
