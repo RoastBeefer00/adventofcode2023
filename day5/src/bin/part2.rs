@@ -1,112 +1,100 @@
 use anyhow::Result;
+use nom::{
+    bytes::complete::take_until,
+    character::complete::{self, line_ending, space1},
+    multi::{many1, separated_list1},
+    sequence::{separated_pair, tuple},
+    IResult, Parser,
+};
+use nom_supreme::{tag::complete::tag, ParserExt};
+use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use std::fs;
+use std::ops::Range;
+use tracing::info;
+// #[derive(Debug)]
+// struct SeedId(u64);
 
-#[derive(Clone, Debug)]
-struct Card {
-    id: i32,
-    score: i32,
-    winning_numbers: Vec<i32>,
+#[derive(Debug)]
+struct SeedMap {
+    mappings: Vec<(Range<u64>, Range<u64>)>,
 }
 
-fn update_score(score: i32) -> i32 {
-    score + 1
-}
+impl SeedMap {
+    fn translate(&self, source: u64) -> u64 {
+        let valid_mapping = self
+            .mappings
+            .iter()
+            .find(|(source_range, _)| source_range.contains(&source));
+        let Some((source_range, destination_range)) = valid_mapping else {
+            return source;
+        };
 
-fn calculate_score(winning_numbers: Vec<i32>, my_numbers: Vec<i32>) -> i32 {
-    let mut score = 0;
-    for number in my_numbers {
-        if winning_numbers.contains(&number) {
-            score = update_score(score.clone());
-        }
-    }
+        let offset = source - source_range.start;
 
-    score
-}
-
-fn process_line(line: String) -> Card {
-    let mut card_split = line.split(": ");
-    let card_name = card_split.next().expect("should have found a name");
-    let card_name_split = card_name.split(" ");
-    let card_id = card_name_split
-        .last()
-        .expect("should have found a number")
-        .parse::<i32>()
-        .unwrap();
-    let card_numbers = card_split.last().expect("should have found numbers");
-    let mut numbers_split = card_numbers.split(" | ");
-    let (winning_numbers_string, my_numbers_string) = (
-        numbers_split
-            .next()
-            .expect("should have found first numbers"),
-        numbers_split
-            .last()
-            .expect("should have found last numbers"),
-    );
-    let (winning_numbers_split, my_numbers_split): (Vec<&str>, Vec<&str>) = (
-        winning_numbers_string.split(" ").collect(),
-        my_numbers_string.split(" ").collect(),
-    );
-
-    let (winning_numbers, my_numbers): (Vec<i32>, Vec<i32>) = (
-        winning_numbers_split
-            .into_iter()
-            .filter(|&num| num != "")
-            .map(|num| num.parse::<i32>().unwrap())
-            .collect(),
-        my_numbers_split
-            .into_iter()
-            .filter(|&num| num != "")
-            .map(|num| num.parse::<i32>().unwrap())
-            .collect(),
-    );
-
-    let score = calculate_score(winning_numbers.clone(), my_numbers);
-
-    Card {
-        id: card_id,
-        score,
-        winning_numbers,
+        destination_range.start + offset
     }
 }
 
+fn line(input: &str) -> IResult<&str, (Range<u64>, Range<u64>)> {
+    let (input, (destination, source, num)) = tuple((
+        complete::u64,
+        complete::u64.preceded_by(tag(" ")),
+        complete::u64.preceded_by(tag(" ")),
+    ))(input)?;
+
+    Ok((
+        input,
+        (source..(source + num), destination..(destination + num)),
+    ))
+}
+
+fn seed_map(input: &str) -> IResult<&str, SeedMap> {
+    take_until("map:")
+        .precedes(tag("map:"))
+        .precedes(many1(line_ending.precedes(line)).map(|mappings| SeedMap { mappings }))
+        .parse(input)
+}
+
+#[tracing::instrument]
+fn parse_seedmaps(input: &str) -> IResult<&str, (Vec<Range<u64>>, Vec<SeedMap>)> {
+    let (input, seeds) = tag("seeds: ")
+        .precedes(separated_list1(
+            space1,
+            separated_pair(complete::u64, tag(" "), complete::u64)
+                .map(|(start, offset)| start..(start + offset)),
+        ))
+        .parse(input)?;
+    let (input, maps) = many1(seed_map)(input)?;
+
+    Ok((input, (seeds, maps)))
+}
+
+#[tracing::instrument]
+pub fn process(input: &str) -> Result<String> {
+    let (_, (seeds, maps)) = parse_seedmaps(input).expect("a valid parse");
+
+    let locations = seeds
+        .into_par_iter()
+        .flat_map(|range| range.clone())
+        .map(|seed| maps.iter().fold(seed, |seed, map| map.translate(seed)))
+        .collect::<Vec<u64>>();
+
+    Ok(locations
+        .iter()
+        .min()
+        .expect("should have a minimum location value")
+        .to_string())
+}
+
+#[tracing::instrument]
 fn main() -> Result<()> {
     let input = fs::read_to_string("input.txt").unwrap();
 
-    let lines: Vec<String> = input.lines().map(String::from).collect();
-    let mut cards: Vec<Card> = lines.into_iter().map(|line| process_line(line)).collect();
+    let result = process(&input)?;
 
-    let adds: Vec<i32> = cards
-        .clone()
-        .into_iter()
-        .map(|card| get_cards_added(card, cards.clone()))
-        .collect();
+    println!("{}", result);
 
-    let mut result: i32 = adds.clone().into_iter().sum();
-    result += cards.len() as i32;
-
-    println!("Sum: {}", result);
     Ok(())
-}
-
-fn get_cards_added(card: Card, all_cards: Vec<Card>) -> i32 {
-    println!("{}", card.clone().id);
-    let mut result = card.score.clone();
-    let mut score = card.score.clone();
-    let id = card.id;
-
-    while score > 0 {
-        let won_card = all_cards
-            .clone()
-            .into_iter()
-            .find(|card| card.id == score + id);
-        result += match won_card {
-            Some(card) => get_cards_added(card, all_cards.clone()),
-            None => 0,
-        };
-        score -= 1;
-    }
-
-    result
 }
 
 #[cfg(test)]
@@ -114,25 +102,12 @@ mod tests {
     use super::*;
     use std::fs;
 
-    #[test]
-    fn test_example_one_day_two() {
+    #[test_log::test]
+    fn test_process() -> Result<()> {
         let input = fs::read_to_string("test.txt").unwrap();
 
-        let lines: Vec<String> = input.lines().map(String::from).collect();
-        let cards: Vec<Card> = lines.into_iter().map(|line| process_line(line)).collect();
-
-        let adds: Vec<i32> = cards
-            .clone()
-            .into_iter()
-            .map(|card| get_cards_added(card, cards.clone()))
-            .collect();
-
-        let mut result: i32 = adds.clone().into_iter().sum();
-        result += cards.len() as i32;
-
-        println!("{:#?}", adds);
-        let answer = 30;
-        assert_eq!(result, answer);
+        assert_eq!("46", process(&input)?);
+        Ok(())
     }
 
     // #[test]
