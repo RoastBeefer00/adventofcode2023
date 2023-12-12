@@ -42,7 +42,7 @@ impl Card {
 #[derive(Debug, PartialEq, Eq)]
 struct Hand {
     cards: Vec<Card>,
-    hand_type: Option<HandType>,
+    hand_type: HandType,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -56,46 +56,58 @@ enum HandType {
     HighCard,
 }
 
-impl Hand {
-    fn calculate_type(&mut self) -> HandType {
-        self.cards.sort_by_key(|card| card.strength);
-
-        let mut unique_cards = self.cards.clone();
-        unique_cards.dedup();
-
-        let mut index = 0;
-        let mut card_matches = std::iter::from_fn(move || {
-            index += 1;
-
-            if index - 1 < unique_cards.len() {
-                Some(
-                    self.cards
-                        .iter()
-                        .filter(|&card| card == unique_cards.get(index - 1).unwrap())
-                        .count(),
-                )
-            } else {
-                None
-            }
-        })
-        .collect::<Vec<_>>();
-        card_matches.sort();
-
-        if card_matches == [5] {
-            HandType::FiveOfAKind
-        } else if card_matches == [1, 4] {
-            HandType::FourOfAKind
-        } else if card_matches == [2, 3] {
-            HandType::FullHouse
-        } else if card_matches == [1, 1, 3] {
-            HandType::ThreeOfAKind
-        } else if card_matches == [1, 2, 2] {
-            HandType::TwoPair
-        } else if card_matches == [1, 1, 1, 2] {
-            HandType::Pair
-        } else {
-            HandType::HighCard
+impl HandType {
+    fn value(&self) -> usize {
+        match *self {
+            HandType::FiveOfAKind => 7,
+            HandType::FourOfAKind => 6,
+            HandType::FullHouse => 5,
+            HandType::ThreeOfAKind => 4,
+            HandType::TwoPair => 3,
+            HandType::Pair => 2,
+            HandType::HighCard => 1,
         }
+    }
+}
+
+fn calculate_type(mut cards: Vec<Card>) -> HandType {
+    cards.sort_by_key(|card| card.strength);
+
+    let mut unique_cards = cards.clone();
+    unique_cards.dedup();
+
+    let mut index = 0;
+    let mut card_matches = std::iter::from_fn(move || {
+        index += 1;
+
+        if index - 1 < unique_cards.len() {
+            Some(
+                cards
+                    .iter()
+                    .filter(|&card| card == unique_cards.get(index - 1).unwrap())
+                    .count(),
+            )
+        } else {
+            None
+        }
+    })
+    .collect::<Vec<_>>();
+    card_matches.sort();
+
+    if card_matches == [5] {
+        HandType::FiveOfAKind
+    } else if card_matches == [1, 4] {
+        HandType::FourOfAKind
+    } else if card_matches == [2, 3] {
+        HandType::FullHouse
+    } else if card_matches == [1, 1, 3] {
+        HandType::ThreeOfAKind
+    } else if card_matches == [1, 2, 2] {
+        HandType::TwoPair
+    } else if card_matches == [1, 1, 1, 2] {
+        HandType::Pair
+    } else {
+        HandType::HighCard
     }
 }
 
@@ -110,8 +122,8 @@ fn parse_line(input: &str) -> IResult<&str, (Hand, u64)> {
         input,
         (
             Hand {
-                cards: hand,
-                hand_type: None,
+                cards: hand.clone(),
+                hand_type: calculate_type(hand),
             },
             bid,
         ),
@@ -156,9 +168,7 @@ mod tests {
                 (hand, bid)
             })
             .collect();
-        for (mut hand, _) in hands.iter() {
-            hand.calculate_type();
-        }
+        hands.sort_by_key(|(hand, _)| hand.hand_type.value());
         dbg!(hands);
         Ok(())
     }
