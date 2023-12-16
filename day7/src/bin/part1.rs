@@ -45,6 +45,31 @@ struct Hand {
     hand_type: HandType,
 }
 
+impl Hand {
+    fn is_better_than(&self, hand: &Hand) -> bool {
+        if self.hand_type.value() == hand.hand_type.value() {
+            let mut i = 0;
+            while i < self.cards.len() {
+                let first = self.cards.get(i).unwrap();
+                let second = hand.cards.get(i).unwrap();
+
+                if first.strength == second.strength {
+                    i += 1;
+                } else if first.strength > second.strength {
+                    return true;
+                } else {
+                    return false;
+                }
+            }
+            false
+        } else if self.hand_type.value() > hand.hand_type.value() {
+            true
+        } else {
+            false
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum HandType {
     FiveOfAKind,
@@ -111,10 +136,10 @@ fn calculate_type(mut cards: Vec<Card>) -> HandType {
     }
 }
 
-fn parse_line(input: &str) -> IResult<&str, (Hand, u64)> {
+fn parse_line(input: &str) -> IResult<&str, (Hand, i64)> {
     let (input, (cards, bid)) = tuple((
         complete::alphanumeric1.map(|c| c),
-        complete::u64.preceded_by(tag(" ")),
+        complete::i64.preceded_by(tag(" ")),
     ))(input)?;
     let hand = cards.chars().map(|c| Card::new(c)).collect::<Vec<_>>();
 
@@ -130,24 +155,33 @@ fn parse_line(input: &str) -> IResult<&str, (Hand, u64)> {
     ))
 }
 
-fn process_race(time: u32, distance: u32) -> Result<u32> {
-    let range = 0..time;
-    let distances: Vec<u32> = range
-        .into_iter()
-        .map(|seconds| seconds * (time - seconds))
-        .collect();
-
-    Ok(distances
-        .into_iter()
-        .filter(|&x| x > distance)
-        .collect::<Vec<_>>()
-        .len() as u32)
-}
-
 fn main() -> Result<()> {
     let input = fs::read_to_string("input.txt").unwrap();
-    let mut lines = input.lines();
+    let lines = input.lines();
 
+    let mut hands: Vec<(Hand, i64)> = lines
+        .into_iter()
+        .map(|line| {
+            let (_, (hand, bid)) = parse_line(line).unwrap();
+            (hand, bid)
+        })
+        .collect();
+    hands.sort_by(|(a, _), (b, _)| a.is_better_than(b).cmp(&b.is_better_than(a)));
+
+    let mut index = 0;
+    let winnings = std::iter::from_fn(move || {
+        index += 1;
+        if index - 1 < hands.len() {
+            let (_, bid) = hands.get(index - 1).unwrap();
+            Some(index as i64 * bid)
+        } else {
+            None
+        }
+    })
+    .collect::<Vec<_>>();
+
+    let sum: i64 = winnings.into_iter().sum();
+    println!("{sum}");
     Ok(())
 }
 
@@ -161,7 +195,7 @@ mod tests {
         let input = fs::read_to_string("test.txt").unwrap();
         let lines = input.lines();
 
-        let mut hands: Vec<(Hand, u64)> = lines
+        let mut hands: Vec<(Hand, i64)> = lines
             .into_iter()
             .map(|line| {
                 let (_, (hand, bid)) = parse_line(line).unwrap();
@@ -169,7 +203,34 @@ mod tests {
             })
             .collect();
         hands.sort_by_key(|(hand, _)| hand.hand_type.value());
-        dbg!(hands);
+
+        let mut index = 0;
+        while index < hands.len() - 1 {
+            let (first_hand, _) = hands.get(index).unwrap();
+            let (second_hand, _) = hands.get(index + 1).unwrap();
+            if first_hand.hand_type == second_hand.hand_type {
+                if first_hand.is_better_than(second_hand) {
+                    hands.swap(index, index + 1);
+                }
+            }
+            index += 1;
+        }
+
+        index = 0;
+        let winnings = std::iter::from_fn(move || {
+            index += 1;
+            if index - 1 < hands.len() {
+                let (_, bid) = hands.get(index - 1).unwrap();
+                Some(index as i64 * bid)
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>();
+
+        let sum: i64 = winnings.into_iter().sum();
+
+        assert_eq!(sum, 6440);
         Ok(())
     }
 }
