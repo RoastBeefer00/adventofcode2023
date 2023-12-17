@@ -1,9 +1,9 @@
 use anyhow::Result;
 use nom::{
     bytes::complete::take_until,
-    character::complete::{self, line_ending, multispace0, space1},
+    character::complete::{self, char, line_ending, multispace0, space1},
     multi::{many1, separated_list1},
-    sequence::{preceded, tuple},
+    sequence::{delimited, preceded, tuple},
     IResult, Parser,
 };
 use nom_supreme::{tag::complete::tag, ParserExt};
@@ -11,192 +11,141 @@ use std::iter::zip;
 use std::ops::Range;
 use std::{fs, iter};
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct Card {
-    strength: u8,
+#[derive(Debug)]
+enum Direction {
+    Left,
+    Right,
 }
 
-impl Card {
-    fn new(card: char) -> Card {
-        let strength = match card {
-            'A' => 13,
-            'K' => 12,
-            'Q' => 11,
-            'T' => 10,
-            '9' => 9,
-            '8' => 8,
-            '7' => 7,
-            '6' => 6,
-            '5' => 5,
-            '4' => 4,
-            '3' => 3,
-            '2' => 2,
-            'J' => 1,
-            _ => 0,
-        };
-
-        Card { strength }
-    }
-}
-
-#[derive(Debug, PartialEq, Eq)]
-struct Hand {
-    cards: Vec<Card>,
-    hand_type: HandType,
-}
-
-impl Hand {
-    fn is_better_than(&self, hand: &Hand) -> bool {
-        if self.hand_type.value() == hand.hand_type.value() {
-            let mut i = 0;
-            while i < self.cards.len() {
-                let first = self.cards.get(i).unwrap();
-                let second = hand.cards.get(i).unwrap();
-
-                if first.strength == second.strength {
-                    i += 1;
-                } else if first.strength > second.strength {
-                    return true;
-                } else {
-                    return false;
-                }
-            }
-            false
-        } else if self.hand_type.value() > hand.hand_type.value() {
-            true
-        } else {
-            false
+impl Direction {
+    fn new(c: char) -> Direction {
+        match c {
+            'L' => Direction::Left,
+            'R' => Direction::Right,
+            _ => Direction::Left,
         }
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-enum HandType {
-    FiveOfAKind,
-    FourOfAKind,
-    FullHouse,
-    ThreeOfAKind,
-    TwoPair,
-    Pair,
-    HighCard,
+#[derive(Clone, Debug)]
+struct Node {
+    id: String,
+    left: String,
+    right: String,
 }
 
-impl HandType {
-    fn value(&self) -> usize {
-        match *self {
-            HandType::FiveOfAKind => 7,
-            HandType::FourOfAKind => 6,
-            HandType::FullHouse => 5,
-            HandType::ThreeOfAKind => 4,
-            HandType::TwoPair => 3,
-            HandType::Pair => 2,
-            HandType::HighCard => 1,
-        }
+impl Node {
+    fn go_left(&self, nodes: Vec<Node>) -> Node {
+        let node: Node = nodes
+            .into_iter()
+            .filter(|node| node.id == self.left)
+            .last()
+            .unwrap();
+
+        node
+    }
+
+    fn go_right(&self, nodes: Vec<Node>) -> Node {
+        let node: Node = nodes
+            .into_iter()
+            .filter(|node| node.id == self.right)
+            .last()
+            .unwrap();
+
+        node
     }
 }
 
-fn calculate_type(mut cards: Vec<Card>) -> HandType {
-    cards.sort_by_key(|card| card.strength);
-
-    let num_jokers = cards
-        .clone()
-        .iter()
-        .filter(|&card| card.strength == 1)
-        .count();
-    let mut unique_cards: Vec<Card> = cards
-        .clone()
-        .into_iter()
-        .filter(|card| card.strength != 1)
-        .collect();
-    unique_cards.dedup();
-
-    let mut index = 0;
-    let mut card_matches = std::iter::from_fn(move || {
-        index += 1;
-
-        if index - 1 < unique_cards.len() {
-            Some(
-                cards
-                    .iter()
-                    .filter(|&card| card == unique_cards.get(index - 1).unwrap())
-                    .count(),
-            )
-        } else {
-            None
-        }
-    })
-    .collect::<Vec<_>>();
-    card_matches.sort();
-
-    if card_matches == [] {
-        return HandType::FiveOfAKind;
-    }
-
-    let len = card_matches.len();
-    card_matches[len - 1] = card_matches.get(len - 1).unwrap() + num_jokers;
-    if card_matches == [5] {
-        HandType::FiveOfAKind
-    } else if card_matches == [1, 4] {
-        HandType::FourOfAKind
-    } else if card_matches == [2, 3] {
-        HandType::FullHouse
-    } else if card_matches == [1, 1, 3] {
-        HandType::ThreeOfAKind
-    } else if card_matches == [1, 2, 2] {
-        HandType::TwoPair
-    } else if card_matches == [1, 1, 1, 2] {
-        HandType::Pair
-    } else {
-        HandType::HighCard
-    }
+#[derive(Clone, Debug)]
+struct Map {
+    maps: Vec<Node>,
 }
 
-fn parse_line(input: &str) -> IResult<&str, (Hand, i64)> {
-    let (input, (cards, bid)) = tuple((
-        complete::alphanumeric1.map(|c| c),
-        complete::i64.preceded_by(tag(" ")),
+fn line(input: &str) -> IResult<&str, Node> {
+    let (input, (id, (left, right))) = tuple((
+        complete::alpha1.map(|c| c),
+        delimited(
+            char('('),
+            tuple((
+                complete::alpha1.map(|c| c),
+                complete::alpha1.map(|c| c).preceded_by(tag(", ")),
+            )),
+            char(')'),
+        )
+        .preceded_by(tag(" = ")),
     ))(input)?;
-    let hand = cards.chars().map(|c| Card::new(c)).collect::<Vec<_>>();
 
     Ok((
         input,
-        (
-            Hand {
-                cards: hand.clone(),
-                hand_type: calculate_type(hand),
-            },
-            bid,
-        ),
+        Node {
+            id: id.to_string(),
+            left: left.to_string(),
+            right: right.to_string(),
+        },
     ))
+}
+
+fn parse_map(input: &str) -> IResult<&str, (Vec<Direction>, Map)> {
+    let (input, directions) = complete::alpha1.map(|c| c).parse(input)?;
+    dbg!(&directions);
+    let (input, nodes) = tag("\n")
+        .precedes(many1(line_ending.precedes(line)).map(|maps| Map { maps }))
+        .parse(input)?;
+    let dirs: Vec<Direction> = directions.chars().map(|c| Direction::new(c)).collect();
+    Ok((input, (dirs, nodes)))
+}
+
+fn process(input: String) -> usize {
+    let (_, (directions, nodes)) = parse_map(&input).unwrap();
+    dbg!((&directions, &nodes));
+
+    let mut the_zs: Vec<Node> = nodes
+        .maps
+        .clone()
+        .into_iter()
+        .filter(|node| node.id.chars().last().unwrap() == 'A')
+        .collect();
+
+    let mut count = 0;
+    let mut index = 0;
+    let mut place = "AAA".to_string();
+    while the_zs
+        .iter()
+        .any(|node| node.id.chars().last().unwrap() != 'Z')
+    {
+        if index == directions.len() {
+            index = 0;
+        }
+
+        let direction = directions.get(index).unwrap();
+        match direction {
+            Direction::Left => {
+                index += 1;
+                count += 1;
+                the_zs = the_zs
+                    .into_iter()
+                    .map(|node| node.go_left(nodes.maps.clone()))
+                    .collect();
+            }
+            Direction::Right => {
+                index += 1;
+                count += 1;
+                the_zs = the_zs
+                    .into_iter()
+                    .map(|node| node.go_right(nodes.maps.clone()))
+                    .collect();
+            }
+        }
+    }
+
+    count
 }
 
 fn main() -> Result<()> {
     let input = fs::read_to_string("input.txt").unwrap();
-    let lines = input.lines();
+    let count = process(input);
 
-    let mut hands: Vec<(Hand, i64)> = lines
-        .into_iter()
-        .map(|line| {
-            let (_, (hand, bid)) = parse_line(line).unwrap();
-            (hand, bid)
-        })
-        .collect();
-    hands.sort_by(|(a, _), (b, _)| a.is_better_than(b).cmp(&b.is_better_than(a)));
-
-    let mut index = 0;
-    let winnings = std::iter::from_fn(move || {
-        index += 1;
-        if index - 1 < hands.len() {
-            let (_, bid) = hands.get(index - 1).unwrap();
-            Some(index as i64 * bid)
-        } else {
-            None
-        }
-    })
-    .collect::<Vec<_>>();
-
-    let sum: i64 = winnings.into_iter().sum();
-    println!("{sum}");
+    println!("{count}");
     Ok(())
 }
 
@@ -206,35 +155,11 @@ mod tests {
     use std::fs;
 
     #[test_log::test]
-    fn test_process() -> Result<()> {
-        let input = fs::read_to_string("test.txt").unwrap();
-        let lines = input.lines();
+    fn test_one() -> Result<()> {
+        let input = fs::read_to_string("test3.txt").unwrap();
+        let count = process(input);
 
-        let mut hands: Vec<(Hand, i64)> = lines
-            .into_iter()
-            .map(|line| {
-                let (_, (hand, bid)) = parse_line(line).unwrap();
-                (hand, bid)
-            })
-            .collect();
-        hands.sort_by(|(a, _), (b, _)| a.is_better_than(b).cmp(&b.is_better_than(a)));
-
-        dbg!(&hands);
-        let mut index = 0;
-        let winnings = std::iter::from_fn(move || {
-            index += 1;
-            if index - 1 < hands.len() {
-                let (_, bid) = hands.get(index - 1).unwrap();
-                Some(index as i64 * bid)
-            } else {
-                None
-            }
-        })
-        .collect::<Vec<_>>();
-
-        let sum: i64 = winnings.into_iter().sum();
-
-        assert_eq!(sum, 5905);
+        assert_eq!(count, 6);
         Ok(())
     }
 }
