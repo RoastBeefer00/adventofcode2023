@@ -39,7 +39,7 @@ impl Node {
         let node: Node = nodes
             .into_iter()
             .filter(|node| node.id == self.left)
-            .last()
+            .next()
             .unwrap();
 
         node
@@ -49,7 +49,7 @@ impl Node {
         let node: Node = nodes
             .into_iter()
             .filter(|node| node.id == self.right)
-            .last()
+            .next()
             .unwrap();
 
         node
@@ -103,16 +103,13 @@ fn process(input: String) -> usize {
         .maps
         .clone()
         .into_iter()
-        .filter(|node| node.id.chars().last().unwrap() == 'A')
+        .filter(|node| node.id.ends_with("A"))
         .collect();
 
+    dbg!(the_zs.clone());
     let mut count = 0;
     let mut index = 0;
-    let mut place = "AAA".to_string();
-    while the_zs
-        .iter()
-        .any(|node| node.id.chars().last().unwrap() != 'Z')
-    {
+    while the_zs.iter().any(|node| !node.id.ends_with("Z")) {
         if index == directions.len() {
             index = 0;
         }
